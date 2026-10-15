@@ -1,0 +1,59 @@
+# Stream-level YAML for Elastic Agent's "Custom Logs" integration (Fleet).
+#
+# In Kibana: Fleet -> Agent policies -> <your policy> -> Add integration ->
+# Custom Logs. Fill in the basic fields:
+#   - Dataset name:  bind.log
+#   - Paths:         /var/log/named/named.log
+# Then open "Advanced options" and paste the block below into the
+# "Custom configurations" YAML box. It's merged into the filestream stream
+# Fleet generates from the fields above, so it should NOT repeat type/id/
+# paths — just the extra keys the basic UI doesn't expose.
+#
+# This is what makes the input use our pipeline instead of the dataset's
+# default one, and keeps multi-part lines (e.g. long "Transfer completed"
+# stats) from being split into separate events.
+#
+# event.timezone is REQUIRED with named.conf.logging.conf's "print-time yes"
+# (used for BIND 9.11 compat instead of "iso8601-utc"): that format has no
+# UTC offset, so the pipeline can't know what timezone the log's local
+# timestamps are in unless this field tells it. Set it to the BIND server's
+# actual IANA timezone name. If you skip this, the pipeline defaults to UTC,
+# which is silently wrong for any server not actually running in UTC.
+
+pipeline: bind-log-pipeline
+fields:
+  event.timezone: "America/Chicago"   # <-- change to the BIND server's real timezone
+fields_under_root: true
+parsers:
+  - multiline:
+      type: pattern
+      # Matches either timestamp format the pipeline understands: BIND's
+      # legacy "14-Aug-2026 10:23:45.678" (print-time yes, the 9.11-safe
+      # default here) or ISO8601 "2026-08-14T10:23:45.678Z" (print-time
+      # iso8601-utc, on BIND versions that support it).
+      pattern: '^(\d{2}-[A-Za-z]{3}-\d{4}|\d{4}-\d{2}-\d{2}T)\d{2}:\d{2}:\d{2}'
+      negate: true
+      match: after
+
+# ---------------------------------------------------------------------------
+# If your Kibana version's Custom Logs integration doesn't expose a
+# "Custom configurations" box (older 8.x), run Elastic Agent standalone
+# instead and use a full input block in elastic-agent.yml:
+#
+# inputs:
+#   - id: bind-log
+#     type: filestream
+#     data_stream.dataset: bind.log
+#     paths:
+#       - /var/log/named/named.log
+#     pipeline: bind-log-pipeline
+#     fields:
+#       event.timezone: "America/Chicago"   # <-- change to the BIND server's real timezone
+#     fields_under_root: true
+#     parsers:
+#       - multiline:
+#           type: pattern
+#           pattern: '^(\d{2}-[A-Za-z]{3}-\d{4}|\d{4}-\d{2}-\d{2}T)\d{2}:\d{2}:\d{2}'
+#           negate: true
+#           match: after
+# ---------------------------------------------------------------------------

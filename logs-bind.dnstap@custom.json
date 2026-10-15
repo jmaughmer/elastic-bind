@@ -1,0 +1,110 @@
+{
+  "template": {
+    "mappings": {
+      "properties": {
+        "dns": {
+          "properties": {
+            "type":          { "type": "keyword" },
+            "id":            { "type": "keyword" },
+            "op_code":       { "type": "keyword" },
+            "response_code": { "type": "keyword" },
+            "header_flags":  { "type": "keyword" },
+            "resolved_ip":   { "type": "ip" },
+            "question": {
+              "properties": {
+                "name":              { "type": "keyword" },
+                "type":              { "type": "keyword" },
+                "class":             { "type": "keyword" },
+                "registered_domain": { "type": "keyword" },
+                "top_level_domain":  { "type": "keyword" },
+                "subdomain":         { "type": "keyword" },
+                "domain":            { "type": "keyword" }
+              }
+            },
+            "answers": {
+              "properties": {
+                "name":  { "type": "keyword" },
+                "type":  { "type": "keyword" },
+                "class": { "type": "keyword" },
+                "ttl":   { "type": "long" },
+                "data":  { "type": "keyword", "ignore_above": 1024 }
+              }
+            }
+          }
+        },
+        "bind": {
+          "properties": {
+            "dnstap": {
+              "properties": {
+                "message_type":    { "type": "keyword" },
+                "socket_protocol": { "type": "keyword" },
+                "query_zone":      { "type": "keyword" },
+                "parse_error":     { "type": "keyword" },
+                "edns": {
+                  "properties": {
+                    "version":  { "type": "long" },
+                    "udp_size": { "type": "long" }
+                  }
+                },
+                "authorities": {
+                  "properties": {
+                    "name":  { "type": "keyword" },
+                    "type":  { "type": "keyword" },
+                    "class": { "type": "keyword" },
+                    "ttl":   { "type": "long" },
+                    "data":  { "type": "keyword", "ignore_above": 1024 }
+                  }
+                },
+                "additionals": {
+                  "properties": {
+                    "name":  { "type": "keyword" },
+                    "type":  { "type": "keyword" },
+                    "class": { "type": "keyword" },
+                    "ttl":   { "type": "long" },
+                    "data":  { "type": "keyword", "ignore_above": 1024 }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "client":      { "properties": { "ip": { "type": "ip" }, "port": { "type": "long" } } },
+        "server":      { "properties": { "ip": { "type": "ip" }, "port": { "type": "long" } } },
+        "source":      { "properties": { "ip": { "type": "ip" }, "port": { "type": "long" } } },
+        "destination": { "properties": { "ip": { "type": "ip" }, "port": { "type": "long" } } },
+        "related": {
+          "properties": {
+            "ip":    { "type": "ip" },
+            "hosts": { "type": "keyword" }
+          }
+        },
+        "network": {
+          "properties": {
+            "protocol":  { "type": "keyword" },
+            "transport": { "type": "keyword" },
+            "type":      { "type": "keyword" }
+          }
+        },
+        "event": {
+          "properties": {
+            "duration": { "type": "long" },
+            "kind":     { "type": "keyword" },
+            "category": { "type": "keyword" },
+            "type":     { "type": "keyword" },
+            "action":   { "type": "keyword" },
+            "outcome":  { "type": "keyword" }
+          }
+        },
+        "observer": {
+          "properties": {
+            "hostname": { "type": "keyword" },
+            "vendor":   { "type": "keyword" },
+            "product":  { "type": "keyword" },
+            "type":     { "type": "keyword" },
+            "version":  { "type": "keyword" }
+          }
+        }
+      }
+    }
+  }
+}

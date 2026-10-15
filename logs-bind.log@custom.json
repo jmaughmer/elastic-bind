@@ -1,0 +1,102 @@
+{
+  "template": {
+    "mappings": {
+      "properties": {
+        "bind": {
+          "properties": {
+            "category":  { "type": "keyword" },
+            "message":   { "type": "match_only_text" },
+            "tsig_key":  { "type": "keyword" },
+            "client": {
+              "properties": { "qname": { "type": "keyword" } }
+            },
+            "query": {
+              "properties": { "flags": { "type": "keyword" } }
+            },
+            "resolving": {
+              "properties": {
+                "name":        { "type": "keyword" },
+                "type":        { "type": "keyword" },
+                "class":       { "type": "keyword" },
+                "server_ip":   { "type": "ip" },
+                "server_port": { "type": "long" }
+              }
+            },
+            "zone": {
+              "properties": {
+                "name":   { "type": "keyword" },
+                "class":  { "type": "keyword" },
+                "serial": { "type": "long" }
+              }
+            },
+            "transfer": {
+              "properties": {
+                "zone":      { "type": "keyword" },
+                "class":     { "type": "keyword" },
+                "peer_ip":   { "type": "ip" },
+                "peer_port": { "type": "long" },
+                "status":    { "type": "match_only_text" }
+              }
+            },
+            "view": { "type": "keyword" },
+            "security": {
+              "properties": {
+                "target":   { "type": "keyword" },
+                "decision": { "type": "keyword" }
+              }
+            },
+            "update": {
+              "properties": {
+                "zone":   { "type": "keyword" },
+                "action": { "type": "keyword" },
+                "detail": { "type": "match_only_text" }
+              }
+            },
+            "error": {
+              "properties": { "reason": { "type": "keyword" } }
+            },
+            "listen": {
+              "properties": {
+                "ip":   { "type": "ip" },
+                "port": { "type": "long" }
+              }
+            }
+          }
+        },
+        "client": {
+          "properties": {
+            "ip":   { "type": "ip" },
+            "port": { "type": "long" }
+          }
+        },
+        "log": {
+          "properties": { "level": { "type": "keyword" } }
+        },
+        "event": {
+          "properties": {
+            "kind":     { "type": "keyword" },
+            "category": { "type": "keyword" },
+            "type":     { "type": "keyword" },
+            "action":   { "type": "keyword" },
+            "outcome":  { "type": "keyword" },
+            "timezone": { "type": "keyword" }
+          }
+        },
+        "source":      { "properties": { "ip": { "type": "ip" } } },
+        "destination": { "properties": { "ip": { "type": "ip" } } },
+        "related":     { "properties": { "ip": { "type": "ip" } } },
+        "dns": {
+          "properties": {
+            "question": {
+              "properties": {
+                "name":  { "type": "keyword" },
+                "class": { "type": "keyword" },
+                "type":  { "type": "keyword" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

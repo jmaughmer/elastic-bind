@@ -1,0 +1,87 @@
+{
+  "_comment": "Kibana alerting rules for the BIND dnstap data stream, loaded by load_alert_rules.py (setup.sh runs it when KIBANA_URL is set). All are Elasticsearch query rules (.es-query, available on every license) against the 'bind-dnstap-data-view' data view from bind-dashboards.ndjson, so the data view's runtime fields (dns.response_time_ms, dns.question.first_label_length) work in queries. Thresholds suit a small-to-medium site: tune 'threshold' and 'timeWindowSize' to your query volume, then re-run the loader (it updates rules in place by id).",
+  "rules": [
+    {
+      "id": "bind-dnstap-nxdomain-client",
+      "name": "BIND: NXDOMAIN spike from a client",
+      "tags": ["bind", "dns", "dnstap", "security"],
+      "interval": "1m",
+      "params": {
+        "kql": "event.action:client_response and dns.response_code:NXDOMAIN",
+        "aggType": "count",
+        "groupBy": "top", "termField": "client.ip", "termSize": 10,
+        "thresholdComparator": ">", "threshold": [100],
+        "timeWindowSize": 5, "timeWindowUnit": "m"
+      },
+      "why": "One client getting a burst of 'no such domain' answers: malware cycling through generated domains (DGA), a scanner, or a badly misconfigured app."
+    },
+    {
+      "id": "bind-dnstap-random-subdomains",
+      "name": "BIND: many distinct NXDOMAIN names under one domain",
+      "tags": ["bind", "dns", "dnstap", "security"],
+      "interval": "1m",
+      "params": {
+        "_comment": "ES|QL, because the query rule's KQL mode can't count distinct values. Fires (one alert listing the domains) whenever the query returns any row; edit the 50 to tune.",
+        "esql": "FROM logs-bind.dnstap-* | WHERE event.action == \"client_response\" AND dns.response_code == \"NXDOMAIN\" AND dns.question.registered_domain IS NOT NULL | STATS distinct_names = COUNT_DISTINCT(dns.question.name), clients = COUNT_DISTINCT(client.ip) BY dns.question.registered_domain | WHERE distinct_names > 50 | SORT distinct_names DESC | LIMIT 10",
+        "timeWindowSize": 15, "timeWindowUnit": "m"
+      },
+      "why": "Lots of different non-existent names under one domain is the signature of DGA malware or a random-subdomain ('water torture') attack against that domain's servers. A broken app repeating one bad name doesn't trigger it."
+    },
+    {
+      "id": "bind-dnstap-failures",
+      "name": "BIND: SERVFAIL / REFUSED spike",
+      "tags": ["bind", "dns", "dnstap", "availability"],
+      "interval": "1m",
+      "params": {
+        "kql": "event.action:client_response and event.outcome:failure",
+        "aggType": "count",
+        "groupBy": "top", "termField": "observer.hostname", "termSize": 10,
+        "thresholdComparator": ">", "threshold": [50],
+        "timeWindowSize": 5, "timeWindowUnit": "m"
+      },
+      "why": "A server failing to answer: upstream or forwarder problems, DNSSEC validation failures, or an ACL change refusing legitimate clients."
+    },
+    {
+      "id": "bind-dnstap-slow-answers",
+      "name": "BIND: slow answers",
+      "tags": ["bind", "dns", "dnstap", "performance"],
+      "interval": "1m",
+      "params": {
+        "kql": "event.action:client_response and dns.response_time_ms:*",
+        "aggType": "avg", "aggField": "dns.response_time_ms",
+        "groupBy": "top", "termField": "observer.hostname", "termSize": 10,
+        "thresholdComparator": ">", "threshold": [500],
+        "timeWindowSize": 5, "timeWindowUnit": "m"
+      },
+      "why": "Average time to answer clients above 500 ms on a server: slow or unreachable upstreams, a cold or undersized cache, or an overloaded server."
+    },
+    {
+      "id": "bind-dnstap-long-labels",
+      "name": "BIND: possible DNS tunnelling (very long query labels)",
+      "tags": ["bind", "dns", "dnstap", "security"],
+      "interval": "1m",
+      "params": {
+        "kql": "event.action:client_response and dns.question.first_label_length >= 40",
+        "aggType": "count",
+        "groupBy": "top", "termField": "client.ip", "termSize": 10,
+        "thresholdComparator": ">", "threshold": [20],
+        "timeWindowSize": 15, "timeWindowUnit": "m"
+      },
+      "why": "Repeated queries whose first label is 40+ characters: data being smuggled out encoded in DNS names, or some CDN/anti-spam lookups — check the names before acting."
+    },
+    {
+      "id": "bind-dnstap-no-data",
+      "name": "BIND: dnstap export stopped",
+      "tags": ["bind", "dns", "dnstap", "pipeline"],
+      "interval": "5m",
+      "params": {
+        "kql": "event.action:client_response",
+        "aggType": "count",
+        "groupBy": "all",
+        "thresholdComparator": "<", "threshold": [1],
+        "timeWindowSize": 15, "timeWindowUnit": "m"
+      },
+      "why": "No answers indexed for 15 minutes: the converter timer (bind-dnstap-ndjson), Elastic Agent, or the pipeline has stopped — or all the BIND servers have."
+    }
+  ]
+}

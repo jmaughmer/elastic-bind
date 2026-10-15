@@ -1,0 +1,22 @@
+{
+  "docs": [
+    { "_source": { "message": "14-Aug-2026 10:00:00.000 default: notice: running" } },
+    { "_source": { "message": "14-Aug-2026 10:00:01.000 general: info: all zones loaded" } },
+    { "_source": { "message": "14-Aug-2026 10:00:02.000 database: debug 1: journal_rollforward: no journal file, but 'IXFR from differences' specified" } },
+    { "_source": { "message": "14-Aug-2026 10:00:03.000 security: info: client @0x7f1234 10.0.0.5#54321 (example.com): view internal: query (cache) 'example.com/A/IN' denied" } },
+    { "_source": { "message": "14-Aug-2026 10:00:04.000 config: notice: reloading configuration succeeded" } },
+    { "_source": { "message": "14-Aug-2026 10:00:05.000 resolver: debug 1: resolving 'example.com/A/IN': 10.0.0.1#53" } },
+    { "_source": { "message": "14-Aug-2026 10:00:06.000 xfer-in: info: transfer of 'example.com/IN' from 10.0.0.1#53: Transfer completed: 1 messages, 20 records, 1500 bytes, 0.123 secs (12195 bytes/sec)" } },
+    { "_source": { "message": "14-Aug-2026 10:00:07.000 xfer-out: info: client 10.0.0.5#54321 (example.com): transfer of 'example.com/IN': AXFR started (serial 2026081401)" } },
+    { "_source": { "message": "14-Aug-2026 10:00:08.000 notify: info: zone example.com/IN: sending notifies (serial 2026081401)" } },
+    { "_source": { "message": "14-Aug-2026 10:00:09.000 client: info: client @0x7f5678 10.0.0.9#40123 (example.com): query: example.com IN A + (10.0.0.2)" } },
+    { "_source": { "message": "14-Aug-2026 10:00:10.000 unmatched: warning: no matching view for TSIG key \"example.\" from 10.0.0.5#54321" } },
+    { "_source": { "message": "14-Aug-2026 10:00:11.000 queries: info: client @0x7f9999 10.0.0.10#33221 (www.example.com): query: www.example.com IN AAAA +E(0)K (10.0.0.2)" } },
+    { "_source": { "message": "14-Aug-2026 10:00:12.000 network: error: network unreachable resolving 'example.com/A/IN': 10.0.0.1#53" } },
+    { "_source": { "message": "14-Aug-2026 10:00:13.000 update: info: client 10.0.0.5#54321/key rndc-key: updating zone 'example.com/IN': adding an RR at 'host.example.com' A 10.0.0.9" } },
+    { "_source": { "message": "14-Aug-2026 10:00:14.000 dispatch: debug 1: createfetch: example.com/A" } },
+    { "_source": { "message": "14-Aug-2026 10:00:15.000 dnssec: info: validating example.com/A: no valid signature found" } },
+    { "_source": { "message": "14-Aug-2026 10:00:16.000 lame-servers: info: error (unexpected RCODE REFUSED) resolving 'example.com/A/IN': 10.0.0.1#53" } },
+    { "_source": { "message": "2026-08-14T10:00:17.000Z queries: info: client @0x7faaaa 10.0.0.11#12345 (example.org): query: example.org IN MX + (10.0.0.2)" } }
+  ]
+}

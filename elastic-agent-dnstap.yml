@@ -1,0 +1,44 @@
+# Stream-level YAML for a second Elastic Agent "Custom Logs" integration
+# (Fleet), for DNS answers exported from dnstap by the bind_dns Ansible
+# role (bind_dnstap_enabled + bind_dnstap_export_enabled). It sits alongside
+# the text-log integration from elastic-agent-custom-logs.yml.
+#
+# In Kibana: Fleet -> Agent policies -> <your policy> -> Add integration ->
+# Custom Logs. Fill in the basic fields:
+#   - Dataset name:  bind.dnstap
+#   - Paths:         /var/log/named/dnstap.ndjson*
+#     (the trailing * also picks up dnstap.ndjson.1, .2 ... so lines written
+#     just before the converter rotates its output aren't missed; filestream
+#     tracks files by identity, so rotated files aren't read twice)
+# Then paste the block below into "Advanced options" -> "Custom configurations".
+#
+# Unlike the text logs there's no event.timezone to set: each event carries
+# an absolute UTC @timestamp taken from the dnstap message itself.
+
+pipeline: bind-dnstap-pipeline
+parsers:
+  - ndjson:
+      target: ""
+      overwrite_keys: true
+      add_error_key: true
+
+# The ndjson parser decodes each line on the agent. bind-dnstap-pipeline
+# also decodes a line that arrives undecoded (as "message"), so the parser
+# block is optional — but decoding on the agent spares the cluster the work.
+
+# ---------------------------------------------------------------------------
+# Standalone Elastic Agent (elastic-agent.yml) equivalent:
+#
+# inputs:
+#   - id: bind-dnstap
+#     type: filestream
+#     data_stream.dataset: bind.dnstap
+#     paths:
+#       - /var/log/named/dnstap.ndjson*
+#     pipeline: bind-dnstap-pipeline
+#     parsers:
+#       - ndjson:
+#           target: ""
+#           overwrite_keys: true
+#           add_error_key: true
+# ---------------------------------------------------------------------------

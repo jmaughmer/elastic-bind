@@ -1,0 +1,85 @@
+{
+  "description": "Enriches BIND dnstap events exported as NDJSON by the bind_dns Ansible role's converter (bind-dnstap-to-ndjson): decodes the JSON line if Elastic Agent didn't, splits dns.question.name into registered domain/subdomain/TLD, and sets event.outcome, event.action and related.ip. The converter already writes ECS field names, so nothing is renamed.",
+  "processors": [
+    {
+      "json": {
+        "description": "Decode the NDJSON line into the document root when the agent shipped it as plain text (no ndjson parser). Documents the agent already decoded have no JSON 'message' and skip this.",
+        "if": "ctx.message instanceof String && ctx.message.startsWith('{') && ctx.dns == null",
+        "field": "message",
+        "add_to_root": true,
+        "add_to_root_conflict_strategy": "replace",
+        "tag": "decode_ndjson",
+        "on_failure": [
+          { "append": { "field": "tags", "value": "bind_dnstap_json_parse_failure" } },
+          { "set": { "field": "error.message", "value": "{{{ _ingest.on_failure_message }}}" } }
+        ]
+      }
+    },
+    {
+      "remove": {
+        "description": "The raw line is redundant once decoded.",
+        "if": "ctx.dns != null && ctx.message instanceof String && ctx.message.startsWith('{')",
+        "field": "message",
+        "ignore_missing": true
+      }
+    },
+    {
+      "registered_domain": {
+        "field": "dns.question.name",
+        "target_field": "dns.question",
+        "ignore_missing": true,
+        "ignore_failure": true,
+        "tag": "question_domain_parts"
+      }
+    },
+    {
+      "script": {
+        "description": "event.action from the dnstap message type (client_response, resolver_query, ...).",
+        "if": "ctx.bind?.dnstap?.message_type != null",
+        "tag": "set_event_action",
+        "source": "if (ctx.event == null) { ctx.event = [:]; } ctx.event.action = ctx.bind.dnstap.message_type.toLowerCase();"
+      }
+    },
+    {
+      "script": {
+        "description": "event.outcome from the response code: an answer (including a definite NXDOMAIN/NODATA) is a success; SERVFAIL, REFUSED and other error codes are failures. Queries have no response code and get no outcome.",
+        "if": "ctx.dns?.response_code != null",
+        "tag": "set_event_outcome",
+        "source": "if (ctx.event == null) { ctx.event = [:]; } String rc = ctx.dns.response_code; ctx.event.outcome = (rc == 'NOERROR' || rc == 'NXDOMAIN') ? 'success' : 'failure';"
+      }
+    },
+    {
+      "append": {
+        "field": "related.ip",
+        "value": ["{{{client.ip}}}", "{{{server.ip}}}"],
+        "allow_duplicates": false,
+        "if": "ctx.client?.ip != null && ctx.server?.ip != null",
+        "tag": "related_ip_endpoints"
+      }
+    },
+    {
+      "foreach": {
+        "description": "Answer addresses go into related.ip too, so an IP search finds the lookups that resolved to it.",
+        "field": "dns.resolved_ip",
+        "ignore_missing": true,
+        "processor": {
+          "append": { "field": "related.ip", "value": "{{{_ingest._value}}}", "allow_duplicates": false }
+        },
+        "tag": "related_ip_answers"
+      }
+    },
+    {
+      "append": {
+        "field": "related.hosts",
+        "value": "{{{dns.question.name}}}",
+        "allow_duplicates": false,
+        "if": "ctx.dns?.question?.name != null",
+        "tag": "related_hosts"
+      }
+    }
+  ],
+  "on_failure": [
+    { "append": { "field": "tags", "value": "bind_dnstap_pipeline_failure" } },
+    { "set": { "field": "error.message", "value": "{{{ _ingest.on_failure_message }}}" } }
+  ]
+}

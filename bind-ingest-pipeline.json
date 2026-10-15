@@ -1,0 +1,235 @@
+{
+  "description": "Parses BIND9 named log lines (default, general, database, security, config, resolver, xfer-in, xfer-out, notify, client, unmatched, queries, network, update, dispatch, dnssec, lame-servers) into ECS fields plus a bind.* namespace.",
+  "processors": [
+    {
+      "grok": {
+        "field": "message",
+        "patterns": [
+          "%{BINDLEGACYTS:bind.timestamp} %{BINDCATEGORY:bind.category}: %{BINDLEVEL:log.level}: %{GREEDYDATA:bind.message}",
+          "%{TIMESTAMP_ISO8601:bind.timestamp} %{BINDCATEGORY:bind.category}: %{BINDLEVEL:log.level}: %{GREEDYDATA:bind.message}"
+        ],
+        "pattern_definitions": {
+          "BINDCATEGORY": "[A-Za-z0-9_\\-]+",
+          "BINDLEVEL": "critical|error|warning|notice|info|debug(?: %{NONNEGINT})?",
+          "BINDLEGACYTS": "%{MONTHDAY}-%{MONTH}-%{YEAR} %{HOUR}:%{MINUTE}:%{SECOND}"
+        },
+        "tag": "parse_bind_envelope",
+        "on_failure": [
+          { "append": { "field": "tags", "value": "bind_envelope_parse_failure" } },
+          { "set": { "field": "event.kind", "value": "pipeline_error" } }
+        ]
+      }
+    },
+    {
+      "set": {
+        "field": "event.timezone",
+        "value": "UTC",
+        "override": false,
+        "description": "Fallback only. BIND 9.11's 'print-time yes' logs local time with no UTC offset, so the shipper MUST set event.timezone (see elastic-agent-custom-logs.yml) to the server's real IANA timezone, or every @timestamp here will be wrong by the UTC offset."
+      }
+    },
+    {
+      "date": {
+        "field": "bind.timestamp",
+        "target_field": "@timestamp",
+        "formats": ["dd-MMM-yyyy HH:mm:ss.SSS", "ISO8601"],
+        "timezone": "{{{event.timezone}}}",
+        "locale": "en",
+        "if": "ctx.bind != null && ctx.bind.timestamp != null",
+        "ignore_failure": true,
+        "tag": "parse_bind_timestamp"
+      }
+    },
+    {
+      "remove": {
+        "field": "bind.timestamp",
+        "ignore_missing": true
+      }
+    },
+    {
+      "set": { "field": "event.dataset", "value": "bind.log" }
+    },
+    {
+      "set": { "field": "event.module", "value": "bind" }
+    },
+    {
+      "set": { "field": "event.kind", "value": "event", "override": false }
+    },
+    {
+      "set": { "field": "observer.type", "value": "dns" }
+    },
+    {
+      "set": { "field": "service.type", "value": "bind" }
+    },
+    {
+      "set": {
+        "field": "event.action",
+        "value": "{{{bind.category}}}",
+        "if": "ctx.bind != null && ctx.bind.category != null"
+      }
+    },
+    {
+      "script": {
+        "tag": "classify_event_category_type",
+        "description": "Maps the BIND logging category onto ECS event.category/event.type",
+        "source": "def cat = ctx.bind != null ? ctx.bind.category : null;\nif (cat == null) { return; }\nList category = new ArrayList();\nList type = new ArrayList();\nif (cat == 'queries' || cat == 'client' || cat == 'resolver' || cat == 'dnssec') {\n  category.add('network'); category.add('dns'); type.add('protocol');\n} else if (cat == 'lame-servers') {\n  category.add('network'); category.add('dns'); type.add('info');\n} else if (cat == 'xfer-in' || cat == 'xfer-out' || cat == 'notify') {\n  category.add('network'); type.add('connection');\n} else if (cat == 'update') {\n  category.add('configuration'); type.add('change');\n} else if (cat == 'security' || cat == 'unmatched') {\n  category.add('network'); type.add('denied');\n} else if (cat == 'config') {\n  category.add('configuration'); type.add('info');\n} else {\n  category.add('process'); type.add('info');\n}\nif (ctx.event == null) { ctx.event = new HashMap(); }\nctx.event.category = category;\nctx.event.type = type;"
+      }
+    },
+    {
+      "grok": {
+        "field": "bind.message",
+        "patterns": [
+          "^client(?: @0x%{BASE16NUM})? %{IP:client.ip}#%{POSINT:client.port:int}(?:/key %{NOTSPACE:bind.tsig_key})?(?: \\(%{DATA:bind.client.qname}\\))?:"
+        ],
+        "ignore_missing": true,
+        "ignore_failure": true,
+        "tag": "extract_client_info"
+      }
+    },
+    {
+      "grok": {
+        "field": "bind.message",
+        "patterns": [
+          "query(?: \\(\\w+\\))?: %{NOTSPACE:dns.question.name} %{WORD:dns.question.class} %{WORD:dns.question.type}(?: %{NOTSPACE:bind.query.flags})?(?: \\(%{IP:destination.ip}\\))?"
+        ],
+        "ignore_missing": true,
+        "ignore_failure": true,
+        "tag": "extract_query_detail"
+      }
+    },
+    {
+      "grok": {
+        "field": "bind.message",
+        "patterns": [
+          "resolving '%{NOTSPACE:bind.resolving.name}/%{WORD:bind.resolving.type}/%{WORD:bind.resolving.class}'(?:: %{IP:bind.resolving.server_ip}(?:#%{POSINT:bind.resolving.server_port:int})?)?"
+        ],
+        "ignore_missing": true,
+        "ignore_failure": true,
+        "tag": "extract_resolving_detail"
+      }
+    },
+    {
+      "grok": {
+        "field": "bind.message",
+        "patterns": [
+          "zone '?%{NOTSPACE:bind.zone.name}/%{WORD:bind.zone.class}'?"
+        ],
+        "ignore_missing": true,
+        "ignore_failure": true,
+        "tag": "extract_zone_name"
+      }
+    },
+    {
+      "grok": {
+        "field": "bind.message",
+        "patterns": [
+          "serial %{NUMBER:bind.zone.serial:long}"
+        ],
+        "ignore_missing": true,
+        "ignore_failure": true,
+        "tag": "extract_zone_serial"
+      }
+    },
+    {
+      "grok": {
+        "field": "bind.message",
+        "patterns": [
+          "transfer of '%{NOTSPACE:bind.transfer.zone}/%{WORD:bind.transfer.class}'(?: from %{IP:bind.transfer.peer_ip}#%{POSINT:bind.transfer.peer_port:int})?: %{GREEDYDATA:bind.transfer.status}"
+        ],
+        "ignore_missing": true,
+        "ignore_failure": true,
+        "tag": "extract_transfer_detail"
+      }
+    },
+    {
+      "grok": {
+        "field": "bind.message",
+        "patterns": [
+          "view %{NOTSPACE:bind.view}:"
+        ],
+        "ignore_missing": true,
+        "ignore_failure": true,
+        "tag": "extract_view"
+      }
+    },
+    {
+      "grok": {
+        "field": "bind.message",
+        "patterns": [
+          "query \\(\\w+\\) '%{NOTSPACE:bind.security.target}' %{WORD:bind.security.decision}"
+        ],
+        "ignore_missing": true,
+        "ignore_failure": true,
+        "tag": "extract_security_decision"
+      }
+    },
+    {
+      "grok": {
+        "field": "bind.message",
+        "patterns": [
+          "updating zone '%{NOTSPACE:bind.update.zone}':\\s+%{WORD:bind.update.action} %{GREEDYDATA:bind.update.detail}"
+        ],
+        "ignore_missing": true,
+        "ignore_failure": true,
+        "tag": "extract_update_detail"
+      }
+    },
+    {
+      "grok": {
+        "field": "bind.message",
+        "patterns": [
+          "error \\(%{DATA:bind.error.reason}\\)"
+        ],
+        "ignore_missing": true,
+        "ignore_failure": true,
+        "tag": "extract_error_reason"
+      }
+    },
+    {
+      "grok": {
+        "field": "bind.message",
+        "patterns": [
+          "listening on .*?%{IP:bind.listen.ip}#%{POSINT:bind.listen.port:int}"
+        ],
+        "ignore_missing": true,
+        "ignore_failure": true,
+        "tag": "extract_listen_address"
+      }
+    },
+    {
+      "grok": {
+        "field": "bind.message",
+        "patterns": [
+          "no matching view.*from %{IP:client.ip}#%{POSINT:client.port:int}"
+        ],
+        "if": "ctx.client == null || ctx.client.ip == null",
+        "ignore_missing": true,
+        "ignore_failure": true,
+        "tag": "extract_unmatched_client"
+      }
+    },
+    {
+      "set": {
+        "field": "source.ip",
+        "value": "{{{client.ip}}}",
+        "if": "ctx.client != null && ctx.client.ip != null"
+      }
+    },
+    {
+      "script": {
+        "tag": "build_related_ip",
+        "source": "List ips = new ArrayList();\nif (ctx.client != null && ctx.client.ip != null) { ips.add(ctx.client.ip); }\nif (ctx.destination != null && ctx.destination.ip != null) { ips.add(ctx.destination.ip); }\nif (ctx.bind != null) {\n  if (ctx.bind.resolving != null && ctx.bind.resolving.server_ip != null) { ips.add(ctx.bind.resolving.server_ip); }\n  if (ctx.bind.transfer != null && ctx.bind.transfer.peer_ip != null) { ips.add(ctx.bind.transfer.peer_ip); }\n  if (ctx.bind.listen != null && ctx.bind.listen.ip != null) { ips.add(ctx.bind.listen.ip); }\n}\nif (ips.size() > 0) {\n  if (ctx.related == null) { ctx.related = new HashMap(); }\n  ctx.related.ip = ips;\n}"
+      }
+    },
+    {
+      "script": {
+        "tag": "classify_event_outcome",
+        "source": "if (ctx.bind == null || ctx.bind.message == null) { return; }\nString m = ctx.bind.message.toLowerCase();\nString outcome = null;\nif (m.contains('denied') || m.contains('refused') || m.contains('failed') || m.contains('lame server') || m.contains('unexpected rcode') || m.contains('expired') || m.contains('error') || m.contains('timeout') || m.contains('unreachable')) {\n  outcome = 'failure';\n} else if (m.contains('approved') || m.contains('succeeded') || m.contains('success') || m.contains('completed') || m.contains('accepted') || m.contains('loaded serial')) {\n  outcome = 'success';\n}\nif (outcome != null) {\n  if (ctx.event == null) { ctx.event = new HashMap(); }\n  ctx.event.outcome = outcome;\n}"
+      }
+    }
+  ],
+  "on_failure": [
+    { "append": { "field": "tags", "value": "bind_pipeline_failure" } },
+    { "set": { "field": "error.message", "value": "{{{ _ingest.on_failure_message }}}" } }
+  ]
+}
