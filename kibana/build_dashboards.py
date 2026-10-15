@@ -66,7 +66,7 @@ data_view(DV_DNSTAP, "logs-bind.dnstap-*", "BIND DNS answers (dnstap)", {
         "{ String n = doc['dns.question.name'].value; int i = n.indexOf('.'); emit(i < 0 ? n.length() : i); }"}},
 })
 # Zone serials are identifiers (2026101409), not quantities: no thousands separators.
-data_view(DV_LOG, "logs-bind.log-*", "BIND server logs", {}, {"bind.zone.serial": {"id": "string"}})
+data_view(DV_LOG, "logs-bind-*", "BIND server logs", {}, {"bind.zone.serial": {"id": "string"}})
 
 
 # ----------------------------------------------------------------- Lens helpers

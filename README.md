@@ -17,7 +17,7 @@ below.
 |---|---|
 | [named.conf.logging.conf](named.conf.logging.conf) | BIND logging stanza — routes all 17 categories into one file with `print-time yes` (9.11-compatible), `print-category yes`, `print-severity yes`. |
 | [bind-ingest-pipeline.json](bind-ingest-pipeline.json) | The Elasticsearch ingest pipeline (`PUT _ingest/pipeline/bind-log-pipeline`). |
-| [logs-bind.log@custom.json](logs-bind.log@custom.json) | Component template with explicit field mappings (ip/long/keyword) that Fleet auto-composes into the `logs-bind.log-*` index template it generates for the dataset. |
+| [logs-bind@custom.json](logs-bind@custom.json) | Component template with explicit field mappings (ip/long/keyword) that Fleet auto-composes into the `logs-bind-*` index template it generates for the dataset. |
 | [elastic-agent-custom-logs.yml](elastic-agent-custom-logs.yml) | Stream YAML for Elastic Agent's **Custom Logs** integration (Fleet) — filestream input, wired to the pipeline. |
 | [bind-pipeline-simulate-test.json](bind-pipeline-simulate-test.json) | One sample line per category, for `_simulate` testing. |
 | [bind-dnstap-pipeline.json](bind-dnstap-pipeline.json) | Ingest pipeline for dnstap answers exported as NDJSON (`PUT _ingest/pipeline/bind-dnstap-pipeline`). |
@@ -104,7 +104,7 @@ ES_URL=https://localhost:9200 ES_AUTH=elastic:yourpassword ./setup.sh
 ```
 
 That loads both pipelines and their component templates
-(`logs-bind.log@custom`, `logs-bind.dnstap@custom`), then runs each
+(`logs-bind@custom`, `logs-bind.dnstap@custom`), then runs each
 pipeline against its sample file and prints the parsed output — **check
 that output before pointing real traffic at it**. Both have been run
 against a single-node Elasticsearch 8.17.0, where every sample parsed
@@ -122,7 +122,7 @@ Then:
    `named.conf` (or an included file) and reload BIND (`rndc reconfig`).
 2. In Kibana, go to **Fleet → Agent policies → \<your policy\> → Add
    integration → Custom Logs**. Set:
-   - **Dataset name**: `bind.log`
+   - **Dataset name**: `bind`
    - **Paths**: `/var/log/named/named.log`
    - Under **Advanced options**, paste
      [elastic-agent-custom-logs.yml](elastic-agent-custom-logs.yml) into the
@@ -192,7 +192,7 @@ stream's lifecycle (ILM) policy for your query rate.
 
 [kibana/bind-dashboards.ndjson](kibana/bind-dashboards.ndjson) holds two
 dashboards, linked to each other by a navigation panel at the top, plus
-the data views they use (`logs-bind.dnstap-*`, `logs-bind.log-*`). Import
+the data views they use (`logs-bind.dnstap-*`, `logs-bind-*`). Import
 them with `setup.sh` by also setting `KIBANA_URL` (same credentials as
 `ES_AUTH`), or in Kibana under **Stack Management → Saved Objects →
 Import**. Both open on the last 24 hours. Built and checked against

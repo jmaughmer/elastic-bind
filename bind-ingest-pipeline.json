@@ -47,7 +47,7 @@
       }
     },
     {
-      "set": { "field": "event.dataset", "value": "bind.log" }
+      "set": { "field": "event.dataset", "value": "bind" }
     },
     {
       "set": { "field": "event.module", "value": "bind" }

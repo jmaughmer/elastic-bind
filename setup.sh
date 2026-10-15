@@ -2,11 +2,11 @@
 # Bootstraps both BIND ingest pipelines + their field mappings in
 # Elasticsearch, and runs each pipeline against its sample documents before
 # anything is wired to real traffic:
-#   - bind-log-pipeline     text logs        (dataset bind.log)
+#   - bind-log-pipeline     text logs        (dataset bind)
 #   - bind-dnstap-pipeline  dnstap NDJSON    (dataset bind.dnstap)
 #
 # Run this BEFORE adding/enabling the Custom Logs integrations in Fleet: a
-# component template only composes into the logs-bind.log-* /
+# component template only composes into the logs-bind-* /
 # logs-bind.dnstap-* index template that Fleet generates if it already
 # exists at that point (or before the first rollover, if the integration is
 # already running).
@@ -32,10 +32,10 @@ ${CURL} -X PUT "${ES_URL}/_ingest/pipeline/bind-log-pipeline" \
   --data-binary @bind-ingest-pipeline.json
 echo
 
-echo "== 2/6 Loading logs-bind.log@custom component template =="
-${CURL} -X PUT "${ES_URL}/_component_template/logs-bind.log@custom" \
+echo "== 2/6 Loading logs-bind@custom component template =="
+${CURL} -X PUT "${ES_URL}/_component_template/logs-bind@custom" \
   -H 'Content-Type: application/json' \
-  --data-binary @logs-bind.log@custom.json
+  --data-binary @logs-bind@custom.json
 echo
 
 echo "== 3/6 Loading dnstap ingest pipeline =="

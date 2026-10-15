@@ -2,7 +2,7 @@
 #
 # In Kibana: Fleet -> Agent policies -> <your policy> -> Add integration ->
 # Custom Logs. Fill in the basic fields:
-#   - Dataset name:  bind.log
+#   - Dataset name:  bind
 #   - Paths:         /var/log/named/named.log
 # Then open "Advanced options" and paste the block below into the
 # "Custom configurations" YAML box. It's merged into the filestream stream
@@ -43,7 +43,7 @@ parsers:
 # inputs:
 #   - id: bind-log
 #     type: filestream
-#     data_stream.dataset: bind.log
+#     data_stream.dataset: bind
 #     paths:
 #       - /var/log/named/named.log
 #     pipeline: bind-log-pipeline
