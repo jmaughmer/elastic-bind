@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Generate kibana/bind-dashboards.ndjson: data views, Lens visualizations,
-saved searches and two dashboards for the BIND data streams.
+saved searches and three dashboards for the BIND data streams (one also
+combining dnstap with the Network Packet Capture integration's DNS data).
 
     python3 kibana/build_dashboards.py
 
@@ -18,8 +19,10 @@ OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bind-dashboards.
 
 DV_DNSTAP = "bind-dnstap-data-view"
 DV_LOG = "bind-log-data-view"
+DV_TRAFFIC = "bind-dns-traffic-data-view"
 DASH_DNSTAP = "bind-dnstap-dashboard"
 DASH_LOG = "bind-log-dashboard"
+DASH_TRAFFIC = "bind-dns-traffic-dashboard"
 
 # Saved-object versions for Kibana 8.17 (as exported by it); objects built in
 # this shape import unchanged into 8.17 and are migrated forward by newer releases.
@@ -54,7 +57,7 @@ def data_view(dv_id, title, name, runtime, formats=None):
     })
 
 
-data_view(DV_DNSTAP, "logs-bind.dnstap-*", "BIND DNS answers (dnstap)", {
+DNS_RUNTIME = {
     # event.duration is nanoseconds; dashboards read milliseconds.
     "dns.response_time_ms": {"type": "double", "script": {"source":
         "if (doc.containsKey('event.duration') && doc['event.duration'].size() > 0) "
@@ -64,6 +67,17 @@ data_view(DV_DNSTAP, "logs-bind.dnstap-*", "BIND DNS answers (dnstap)", {
     "dns.question.first_label_length": {"type": "long", "script": {"source":
         "if (doc.containsKey('dns.question.name') && doc['dns.question.name'].size() > 0) "
         "{ String n = doc['dns.question.name'].value; int i = n.indexOf('.'); emit(i < 0 ? n.length() : i); }"}},
+}
+data_view(DV_DNSTAP, "logs-bind.dnstap-*", "BIND DNS answers (dnstap)", DNS_RUNTIME)
+# Both DNS sources in one data view: BIND's dnstap export and the Network
+# Packet Capture integration's DNS transactions (logs-network_traffic.dns-*,
+# Packetbeat's ECS fields). dns.source names which one an event came from.
+data_view(DV_TRAFFIC, "logs-bind.dnstap-*,logs-network_traffic.dns-*", "DNS traffic (dnstap + packet capture)", {
+    **DNS_RUNTIME,
+    "dns.source": {"type": "keyword", "script": {"source":
+        "if (doc.containsKey('data_stream.dataset') && doc['data_stream.dataset'].size() > 0) {"
+        " String d = doc['data_stream.dataset'].value;"
+        " emit(d == 'bind.dnstap' ? 'BIND (dnstap)' : d == 'network_traffic.dns' ? 'Packet capture' : d); }"}},
 })
 # Zone serials are identifiers (2026101409), not quantities: no thousands separators.
 data_view(DV_LOG, "logs-bind-*", "BIND server logs", {}, {"bind.zone.serial": {"id": "string"}})
@@ -127,7 +141,7 @@ def metric_vis(obj_id, title, dv, column, kql=""):
                 {"layerId": "L1", "layerType": "data", "metricAccessor": "m"}, kql)
 
 
-def xy_vis(obj_id, title, dv, columns, accessors, x, split=None, series="bar_stacked", kql=""):
+def xy_vis(obj_id, title, dv, columns, accessors, x, split=None, series="bar_stacked", kql="", legend="right"):
     if split:
         # Split first: otherwise Lens ranks the top N within each time bucket
         # instead of overall, and the legend fills with one-off values.
@@ -137,7 +151,7 @@ def xy_vis(obj_id, title, dv, columns, accessors, x, split=None, series="bar_sta
     if split:
         layer["splitAccessor"] = split
     return lens(obj_id, title, dv, "lnsXY", columns, {
-        "legend": {"isVisible": True, "position": "right"}, "valueLabels": "hide", "fittingFunction": "Linear",
+        "legend": {"isVisible": True, "position": legend}, "valueLabels": "hide", "fittingFunction": "Linear",
         "axisTitlesVisibilitySettings": {"x": False, "yLeft": False, "yRight": True},
         "preferredSeriesType": series, "layers": [layer]}, kql)
 
@@ -217,11 +231,12 @@ def dashboard(obj_id, title, description, layout):
 
 
 def nav(prefix, note):
-    """Top row: a Links panel to both dashboards plus a short description."""
+    """Top row: a Links panel to every dashboard plus a short description."""
     return [
         (links(f"{prefix}-links", "BIND dashboards",
-               [(DASH_DNSTAP, "DNS answers (dnstap)"), (DASH_LOG, "Server logs")]), "links", 0, 0, 16, 4),
-        (markdown(f"{prefix}-about", "About this dashboard", note), "visualization", 16, 0, 32, 4),
+               [(DASH_DNSTAP, "DNS answers (dnstap)"), (DASH_TRAFFIC, "DNS traffic (dnstap + packet capture)"),
+                (DASH_LOG, "Server logs")]), "links", 0, 0, 24, 4),
+        (markdown(f"{prefix}-about", "About this dashboard", note), "visualization", 24, 0, 24, 4),
     ]
 
 # ======================================================== dnstap dashboard
@@ -314,6 +329,110 @@ dn = nav("bind-dnstap", (
 ]
 dashboard(DASH_DNSTAP, "[BIND] DNS answers (dnstap)",
           "Answers sent by BIND, captured with dnstap and exported by the bind_dns Ansible role.", dn)
+
+# ============================================ dnstap + packet capture dashboard
+T = DV_TRAFFIC
+BIND_ANS = 'data_stream.dataset:"bind.dnstap" and event.action:"client_response"'
+# Packetbeat writes one event per DNS transaction: the question and, if one
+# came back, the answer. No response code means no answer was seen.
+WIRE = 'data_stream.dataset:"network_traffic.dns"'
+WIRE_ANS = f"{WIRE} and dns.response_code:*"
+WIRE_NOANS = f"{WIRE} and not dns.response_code:*"
+# One event per answered (or, on the wire, attempted) lookup from each source.
+TRAFFIC = f"({BIND_ANS}) or ({WIRE})"
+TIMED = f"({BIND_ANS}) or ({WIRE_ANS})"
+FAILED = "dns.response_code:(SERVFAIL or REFUSED)"
+
+
+def by_source(label_bind, label_wire, kql=None):
+    """Two count columns, one per source, for side-by-side tables."""
+    extra = f" and ({kql})" if kql else ""
+    return {"b": count(label_bind, f"({BIND_ANS}){extra}"), "w": count(label_wire, f"({WIRE}){extra}")}
+
+
+SRC = terms("dns.source", "Source", "v", 3)
+
+tr = nav("bind-traffic", (
+    "BIND's own record of its answers (dnstap) next to the DNS traffic Elastic's Network Packet Capture "
+    "integration sees on the wire. If the capture runs on the BIND servers, both see the same lookups, so "
+    "panels compare the sources instead of adding them up. Only the wire shows DNS servers other than BIND "
+    "and queries that never got an answer.")) + [
+
+    (metric_vis("bind-traffic-kpi-bind", "Answers sent by BIND (dnstap)", T, count("Answers"), BIND_ANS),
+     "lens", 0, 4, 8, 6),
+    (metric_vis("bind-traffic-kpi-wire", "DNS transactions on the wire", T, count("Transactions"), WIRE),
+     "lens", 8, 4, 8, 6),
+    (metric_vis("bind-traffic-kpi-unanswered", "Unanswered queries on the wire", T, count("Unanswered"),
+                WIRE_NOANS), "lens", 16, 4, 8, 6),
+    (metric_vis("bind-traffic-kpi-servers", "DNS servers seen on the wire", T,
+                metric("unique_count", "server.ip", "Servers"), WIRE), "lens", 24, 4, 8, 6),
+    (metric_vis("bind-traffic-kpi-p50-bind", "Median response time, BIND (ms)", T,
+                metric("median", "dns.response_time_ms", "Median ms"), BIND_ANS), "lens", 32, 4, 8, 6),
+    (metric_vis("bind-traffic-kpi-p50-wire", "Median response time, wire (ms)", T,
+                metric("median", "dns.response_time_ms", "Median ms"), WIRE_ANS), "lens", 40, 4, 8, 6),
+
+    (xy_vis("bind-traffic-over-time", "DNS traffic over time by source", T,
+            {"t": date_hist(), "s": SRC, "v": count("Lookups")}, ["v"], "t", "s", series="line", kql=TRAFFIC, legend="bottom"),
+     "lens", 0, 10, 32, 13),
+    (xy_vis("bind-traffic-rcodes", "Response codes by source", T,
+            {"r": terms("dns.response_code", "Response code", "v", 8, other=False), "s": SRC, "v": count("Lookups")},
+            ["v"], "r", "s", series="bar_horizontal", kql=TIMED, legend="bottom"), "lens", 32, 10, 16, 13),
+
+    (xy_vis("bind-traffic-p50", "Median response time (ms) by source", T,
+            {"t": date_hist(), "s": SRC, "v": metric("median", "dns.response_time_ms", "Median ms")},
+            ["v"], "t", "s", series="line", kql=TIMED, legend="bottom"), "lens", 0, 23, 24, 13),
+    (xy_vis("bind-traffic-p95", "95th percentile response time (ms) by source", T,
+            {"t": date_hist(), "s": SRC,
+             "v": metric("percentile", "dns.response_time_ms", "p95 ms", params={"percentile": 95})},
+            ["v"], "t", "s", series="line", kql=TIMED, legend="bottom"), "lens", 24, 23, 24, 13),
+
+    (table_vis("bind-traffic-servers",
+               "DNS servers clients use (packet capture; anything that isn't one of your BIND servers bypasses them)", T,
+               {"s": terms("server.ip", "DNS server", "v", 15, data_type="ip", other=False), "v": count("Transactions"),
+                "c": metric("unique_count", "client.ip", "Clients"),
+                "n": count("Unanswered", "not dns.response_code:*"),
+                "m": metric("median", "dns.response_time_ms", "Median ms")}, WIRE), "lens", 0, 36, 24, 14),
+    (table_vis("bind-traffic-client-servers",
+               "Clients by number of DNS servers they use (packet capture; more than your BIND servers means some bypass them)", T,
+               {"c": terms("client.ip", "Client", "u", 15, data_type="ip", other=False),
+                "u": metric("unique_count", "server.ip", "DNS servers"), "v": count("Transactions"),
+                "n": count("Unanswered", "not dns.response_code:*")}, WIRE), "lens", 24, 36, 24, 14),
+
+    (table_vis("bind-traffic-top-names", "Top queried names: BIND vs wire", T,
+               {"n": terms("dns.question.name", "Name", "t", 15, other=False), "t": count("Both sources"),
+                **by_source("BIND answers", "Wire transactions"),
+                "c": metric("unique_count", "client.ip", "Clients")}, TRAFFIC), "lens", 0, 50, 24, 15),
+    (table_vis("bind-traffic-top-clients", "Top clients: BIND vs wire", T,
+               {"c": terms("client.ip", "Client", "t", 15, data_type="ip", other=False), "t": count("Both sources"),
+                **by_source("BIND answers", "Wire transactions"),
+                "u": metric("unique_count", "dns.question.name", "Distinct names")}, TRAFFIC), "lens", 24, 50, 24, 15),
+
+    (table_vis("bind-traffic-nxdomain", "NXDOMAIN by domain: BIND vs wire", T,
+               {"d": terms("dns.question.registered_domain", "Domain", "t", 15, other=False), "t": count("Both sources"),
+                **by_source("BIND", "Wire"),
+                "u": metric("unique_count", "dns.question.name", "Distinct names")},
+               f"({TRAFFIC}) and dns.response_code:NXDOMAIN"), "lens", 0, 65, 24, 14),
+    (table_vis("bind-traffic-unanswered", "Unanswered queries on the wire (no response seen)", T,
+               {"n": terms("dns.question.name", "Name", "v", 15, other=False), "v": count("Queries"),
+                "s": metric("unique_count", "server.ip", "Servers"),
+                "c": metric("unique_count", "client.ip", "Clients")}, WIRE_NOANS), "lens", 24, 65, 24, 14),
+
+    (xy_vis("bind-traffic-qtypes", "Query types by source", T,
+            {"q": terms("dns.question.type", "Query type", "v", 8, other=False), "s": SRC, "v": count("Lookups")},
+            ["v"], "q", "s", series="bar_horizontal", kql=TRAFFIC, legend="bottom"), "lens", 0, 79, 16, 12),
+    (table_vis("bind-traffic-failures", "SERVFAIL / REFUSED by server: BIND vs wire", T,
+               {"s": terms("server.ip", "Server", "t", 10, data_type="ip", other=False), "t": count("Both sources"),
+                **by_source("BIND", "Wire")}, f"({TIMED}) and {FAILED}"), "lens", 16, 79, 16, 12),
+    (table_vis("bind-traffic-resolved", "Top resolved addresses: BIND vs wire", T,
+               {"i": terms("dns.resolved_ip", "Address", "t", 15, data_type="ip", other=False), "t": count("Both sources"),
+                **by_source("BIND", "Wire")}, TRAFFIC), "lens", 32, 79, 16, 12),
+
+    (saved_search("bind-traffic-search", "DNS traffic: dnstap and packet capture", T,
+                  ["dns.source", "client.ip", "server.ip", "dns.question.name", "dns.question.type",
+                   "dns.response_code", "dns.answers.data", "dns.response_time_ms"], TRAFFIC), "search", 0, 91, 48, 16),
+]
+dashboard(DASH_TRAFFIC, "[BIND] DNS traffic (dnstap + packet capture)",
+          "BIND's dnstap answers alongside the Network Packet Capture integration's DNS transactions.", tr)
 
 # ======================================================== text-log dashboard
 L = DV_LOG

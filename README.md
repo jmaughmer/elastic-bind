@@ -24,7 +24,7 @@ below.
 | [logs-bind.dnstap@custom.json](logs-bind.dnstap@custom.json) | Component template with the field mappings for the `logs-bind.dnstap-*` data stream. |
 | [elastic-agent-dnstap.yml](elastic-agent-dnstap.yml) | Stream YAML for a second **Custom Logs** integration that ships the dnstap NDJSON through that pipeline. |
 | [bind-dnstap-simulate-test.json](bind-dnstap-simulate-test.json) | Sample exported events (real converter output), for `_simulate` testing. |
-| [kibana/bind-dashboards.ndjson](kibana/bind-dashboards.ndjson) | Kibana dashboards for both data streams, with their data views (Saved Objects import). |
+| [kibana/bind-dashboards.ndjson](kibana/bind-dashboards.ndjson) | Kibana dashboards for both data streams, plus one combining dnstap with Network Packet Capture DNS data, with their data views (Saved Objects import). |
 | [kibana/build_dashboards.py](kibana/build_dashboards.py) | Generates that NDJSON — edit panels here and re-run, rather than hand-editing the export. |
 | [kibana/alert-rules.json](kibana/alert-rules.json) | Kibana alerting rules for the dnstap data (thresholds, queries, what each one means). |
 | [kibana/load_alert_rules.py](kibana/load_alert_rules.py) | Creates or updates those rules through Kibana's alerting API. |
@@ -190,9 +190,10 @@ stream's lifecycle (ILM) policy for your query rate.
 
 ## Kibana dashboards
 
-[kibana/bind-dashboards.ndjson](kibana/bind-dashboards.ndjson) holds two
+[kibana/bind-dashboards.ndjson](kibana/bind-dashboards.ndjson) holds three
 dashboards, linked to each other by a navigation panel at the top, plus
-the data views they use (`logs-bind.dnstap-*`, `logs-bind-*`). Import
+the data views they use (`logs-bind.dnstap-*`, `logs-bind-*`, and
+`logs-bind.dnstap-*,logs-network_traffic.dns-*` for the combined one). Import
 them with `setup.sh` by also setting `KIBANA_URL` (same credentials as
 `ES_AUTH`), or in Kibana under **Stack Management → Saved Objects →
 Import**. Both open on the last 24 hours. Built and checked against
@@ -233,6 +234,41 @@ ES_URL=https://localhost:9200 ES_AUTH=elastic:yourpassword KIBANA_URL=https://lo
 - A table of the individual answers (client, name, type, response code,
   answer data, response time).
 
+**[BIND] DNS traffic (dnstap + packet capture)** — BIND's dnstap answers
+next to the DNS transactions that Elastic's **Network Packet Capture**
+integration sees on the wire (`logs-network_traffic.dns-*`, with its DNS
+protocol enabled). Packetbeat records one event per lookup: the question
+and, if one came back, the answer, with `event.duration` measured on the
+wire. Its fields use the same ECS names as the dnstap export, so one data
+view covers both. A `dns.source` runtime field labels every event
+"BIND (dnstap)" or "Packet capture".
+
+If the capture runs on, or in front of, the BIND servers, both sources see
+the same lookups. The panels therefore compare the sources side by side
+and never add them together; a "Both sources" column only serves to rank
+rows. Compared with dnstap, the wire adds what BIND can't see:
+
+- KPIs: answers sent by BIND, transactions on the wire, queries on the
+  wire that never got an answer, how many DNS servers the wire saw, and the
+  median response time measured by each.
+- Traffic over time, response codes, query types, and median and
+  95th-percentile response times, each split by source. BIND's times
+  (from query pairing, see above) exclude the network; the wire's include
+  it.
+- **DNS servers clients use**: every server seen on the wire, with clients,
+  unanswered queries and median time. A server that isn't one of your BIND
+  servers means clients bypass them, e.g. a hard-coded 8.8.8.8.
+- **Clients by number of DNS servers they use**: clients using more
+  servers than you run BIND servers are the ones bypassing them.
+- **Unanswered queries on the wire**, by name, server and client count.
+  dnstap only records lookups BIND received.
+- Top names, clients, resolved addresses, NXDOMAIN by domain, and
+  SERVFAIL/REFUSED by server, with a column per source.
+- A table of the individual events from both sources.
+
+Without the packet-capture data the dashboard still works, showing BIND's
+side only. Without the dnstap export, it shows the wire's side only.
+
 **[BIND] Server logs** — from the text logs:
 
 - KPIs: log events, errors and warnings, failures, security denials, zone
@@ -247,7 +283,8 @@ ES_URL=https://localhost:9200 ES_AUTH=elastic:yourpassword KIBANA_URL=https://lo
   dnstap dashboard has answers.
 - A table of errors, warnings and failures.
 
-The dnstap data view adds two runtime fields the dashboards use:
+The dnstap and combined data views add two runtime fields the dashboards use
+(the combined one also adds `dns.source`):
 `dns.response_time_ms` (`event.duration` in milliseconds; see the note on
 response times below) and
 `dns.question.first_label_length`. To change a dashboard, edit
