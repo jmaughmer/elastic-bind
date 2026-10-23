@@ -1,0 +1,3 @@
+# Keep LF in the working copy: setup.sh and the Python scripts run under bash
+# and Linux, and the NDJSON/JSON files are uploaded byte for byte.
+* text=auto eol=lf
