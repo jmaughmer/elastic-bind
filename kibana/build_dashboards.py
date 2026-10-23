@@ -437,7 +437,7 @@ dashboard(DASH_TRAFFIC, "[BIND] DNS traffic (dnstap + packet capture)",
 # ======================================================== text-log dashboard
 L = DV_LOG
 lg = nav("bind-log", (
-    "BIND's text logs (all logging categories, via bind-log-pipeline). Query-log panels only show the "
+    "BIND's text logs (all logging categories, via logs-bind@custom). Query-log panels only show the "
     "question; the dnstap dashboard has the answers.")) + [
 
     (metric_vis("bind-log-kpi-events", "Log events", L, count("Events")), "lens", 0, 4, 8, 6),
@@ -500,7 +500,7 @@ lg = nav("bind-log", (
                   "log.level:(error or warning or critical) or event.outcome:failure"), "search", 0, 78, 48, 16),
 ]
 dashboard(DASH_LOG, "[BIND] Server logs",
-          "BIND text logs parsed by bind-log-pipeline: activity, errors, security, transfers, updates.", lg)
+          "BIND text logs parsed by logs-bind@custom: activity, errors, security, transfers, updates.", lg)
 
 with open(OUT, "w", encoding="utf-8", newline="\n") as f:
     for o in objects:

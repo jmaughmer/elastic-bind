@@ -20,7 +20,7 @@
 # actual IANA timezone name. If you skip this, the pipeline defaults to UTC,
 # which is silently wrong for any server not actually running in UTC.
 
-pipeline: bind-log-pipeline
+pipeline: logs-bind@custom
 fields:
   event.timezone: "America/Chicago"   # <-- change to the BIND server's real timezone
 fields_under_root: true
@@ -46,7 +46,7 @@ parsers:
 #     data_stream.dataset: bind
 #     paths:
 #       - /var/log/named/named.log
-#     pipeline: bind-log-pipeline
+#     pipeline: logs-bind@custom
 #     fields:
 #       event.timezone: "America/Chicago"   # <-- change to the BIND server's real timezone
 #     fields_under_root: true

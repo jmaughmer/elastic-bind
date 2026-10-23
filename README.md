@@ -16,11 +16,11 @@ below.
 | File | Purpose |
 |---|---|
 | [named.conf.logging.conf](named.conf.logging.conf) | BIND logging stanza — routes all 17 categories into one file with `print-time yes` (9.11-compatible), `print-category yes`, `print-severity yes`. |
-| [bind-ingest-pipeline.json](bind-ingest-pipeline.json) | The Elasticsearch ingest pipeline (`PUT _ingest/pipeline/bind-log-pipeline`). |
+| [bind-ingest-pipeline.json](bind-ingest-pipeline.json) | The Elasticsearch ingest pipeline (`PUT _ingest/pipeline/logs-bind@custom`). |
 | [logs-bind@custom.json](logs-bind@custom.json) | Component template with explicit field mappings (ip/long/keyword) that Fleet auto-composes into the `logs-bind-*` index template it generates for the dataset. |
 | [elastic-agent-custom-logs.yml](elastic-agent-custom-logs.yml) | Stream YAML for Elastic Agent's **Custom Logs** integration (Fleet) — filestream input, wired to the pipeline. |
 | [bind-pipeline-simulate-test.json](bind-pipeline-simulate-test.json) | One sample line per category, for `_simulate` testing. |
-| [bind-dnstap-pipeline.json](bind-dnstap-pipeline.json) | Ingest pipeline for dnstap answers exported as NDJSON (`PUT _ingest/pipeline/bind-dnstap-pipeline`). |
+| [bind-dnstap-pipeline.json](bind-dnstap-pipeline.json) | Ingest pipeline for dnstap answers exported as NDJSON (`PUT _ingest/pipeline/logs-bind.dnstap@custom`). |
 | [logs-bind.dnstap@custom.json](logs-bind.dnstap@custom.json) | Component template with the field mappings for the `logs-bind.dnstap-*` data stream. |
 | [elastic-agent-dnstap.yml](elastic-agent-dnstap.yml) | Stream YAML for a second **Custom Logs** integration that ships the dnstap NDJSON through that pipeline. |
 | [bind-dnstap-simulate-test.json](bind-dnstap-simulate-test.json) | Sample exported events (real converter output), for `_simulate` testing. |
@@ -107,8 +107,10 @@ ES_URL=https://localhost:9200 ES_AUTH=elastic:yourpassword ./setup.sh
 [Manual setup with Kibana Dev Tools](#manual-setup-with-kibana-dev-tools)
 below.)
 
-That loads both pipelines and their component templates
-(`logs-bind@custom`, `logs-bind.dnstap@custom`), then runs each
+That loads both ingest pipelines and the component templates with their
+field mappings, all named after the data stream they serve:
+`logs-bind@custom` for the text logs and `logs-bind.dnstap@custom` for
+dnstap. It then runs each
 pipeline against its sample file and prints the parsed output — **check
 that output before pointing real traffic at it**. Both have been run
 against a single-node Elasticsearch 8.17.0, where every sample parsed
@@ -119,6 +121,33 @@ Do this *before* enabling the integration below: Fleet only composes a
 `@custom` component template into the index template it generates for a
 data stream if the component template already exists (or, if the
 integration is already running, before the next backing-index rollover).
+
+Each pipeline shares its name with its component template.
+Elasticsearch keeps ingest pipelines and component templates separately,
+so they don't clash. `<type>-<dataset>@custom` is Fleet's naming
+convention for a data stream's custom pipeline and mappings.
+
+**Upgrading from the old pipeline names.** Earlier versions named the
+pipelines `bind-log-pipeline` (text logs) and `bind-dnstap-pipeline`
+(dnstap). To upgrade:
+
+1. Load the pipelines under their new names: run `setup.sh` again, or
+   steps 1 and 2 below.
+2. In each Custom Logs integration's custom configuration, change
+   `pipeline:` to `logs-bind@custom`
+   ([elastic-agent-custom-logs.yml](elastic-agent-custom-logs.yml)) or
+   `logs-bind.dnstap@custom`
+   ([elastic-agent-dnstap.yml](elastic-agent-dnstap.yml)), and deploy the
+   policy.
+3. Once the agents use the new names, delete the old pipelines:
+
+   ```console
+   DELETE _ingest/pipeline/bind-log-pipeline
+   DELETE _ingest/pipeline/bind-dnstap-pipeline
+   ```
+
+Agents keep using the old pipelines until step 2, so nothing breaks in
+between.
 
 ### Manual setup with Kibana Dev Tools
 
@@ -135,7 +164,7 @@ both.
 **1. Text-log pipeline and its field mappings** (dataset `bind`):
 
 ```console
-PUT _ingest/pipeline/bind-log-pipeline
+PUT _ingest/pipeline/logs-bind@custom
 <paste the contents of bind-ingest-pipeline.json>
 
 PUT _component_template/logs-bind@custom
@@ -146,7 +175,7 @@ PUT _component_template/logs-bind@custom
 skip this if you don't use the dnstap export):
 
 ```console
-PUT _ingest/pipeline/bind-dnstap-pipeline
+PUT _ingest/pipeline/logs-bind.dnstap@custom
 <paste the contents of bind-dnstap-pipeline.json>
 
 PUT _component_template/logs-bind.dnstap@custom
@@ -161,10 +190,10 @@ its request line.
 `setup.sh` also runs:
 
 ```console
-POST _ingest/pipeline/bind-log-pipeline/_simulate
+POST _ingest/pipeline/logs-bind@custom/_simulate
 <paste the contents of bind-pipeline-simulate-test.json>
 
-POST _ingest/pipeline/bind-dnstap-pipeline/_simulate
+POST _ingest/pipeline/logs-bind.dnstap@custom/_simulate
 <paste the contents of bind-dnstap-simulate-test.json>
 ```
 
@@ -240,7 +269,7 @@ turns the binary capture into one JSON object per message in
 records, EDNS, the dnstap message type). Each event carries an absolute
 UTC `@timestamp`, so there's no timezone to configure.
 
-`bind-dnstap-pipeline` adds what the converter can't:
+`logs-bind.dnstap@custom` adds what the converter can't:
 
 - decodes the JSON line itself if Elastic Agent shipped it as plain text,
   and passes already-decoded documents (the agent's `ndjson` parser)
@@ -269,7 +298,7 @@ To ship it, after `setup.sh` (or the Dev Tools steps above), add a second
   converter's rotated files)
 - **Advanced options → Custom configurations**: paste
   [elastic-agent-dnstap.yml](elastic-agent-dnstap.yml), which routes events
-  through `bind-dnstap-pipeline` and decodes each line on the agent.
+  through `logs-bind.dnstap@custom` and decodes each line on the agent.
 
 Expect one document per DNS response — size the `bind.dnstap` data
 stream's lifecycle (ILM) policy for your query rate.

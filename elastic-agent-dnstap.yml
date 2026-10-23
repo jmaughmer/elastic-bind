@@ -15,14 +15,14 @@
 # Unlike the text logs there's no event.timezone to set: each event carries
 # an absolute UTC @timestamp taken from the dnstap message itself.
 
-pipeline: bind-dnstap-pipeline
+pipeline: logs-bind.dnstap@custom
 parsers:
   - ndjson:
       target: ""
       overwrite_keys: true
       add_error_key: true
 
-# The ndjson parser decodes each line on the agent. bind-dnstap-pipeline
+# The ndjson parser decodes each line on the agent. logs-bind.dnstap@custom
 # also decodes a line that arrives undecoded (as "message"), so the parser
 # block is optional — but decoding on the agent spares the cluster the work.
 
@@ -35,7 +35,7 @@ parsers:
 #     data_stream.dataset: bind.dnstap
 #     paths:
 #       - /var/log/named/dnstap.ndjson*
-#     pipeline: bind-dnstap-pipeline
+#     pipeline: logs-bind.dnstap@custom
 #     parsers:
 #       - ndjson:
 #           target: ""

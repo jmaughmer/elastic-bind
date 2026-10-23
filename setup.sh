@@ -2,8 +2,8 @@
 # Bootstraps both BIND ingest pipelines + their field mappings in
 # Elasticsearch, and runs each pipeline against its sample documents before
 # anything is wired to real traffic:
-#   - bind-log-pipeline     text logs        (dataset bind)
-#   - bind-dnstap-pipeline  dnstap NDJSON    (dataset bind.dnstap)
+#   - logs-bind@custom         text logs      (dataset bind)
+#   - logs-bind.dnstap@custom  dnstap NDJSON  (dataset bind.dnstap)
 #
 # Run this BEFORE adding/enabling the Custom Logs integrations in Fleet: a
 # component template only composes into the logs-bind-* /
@@ -27,7 +27,7 @@ KIBANA_URL="${KIBANA_URL:-}"
 CURL="curl -sS -k -u ${ES_AUTH}"
 
 echo "== 1/6 Loading text-log ingest pipeline =="
-${CURL} -X PUT "${ES_URL}/_ingest/pipeline/bind-log-pipeline" \
+${CURL} -X PUT "${ES_URL}/_ingest/pipeline/logs-bind@custom" \
   -H 'Content-Type: application/json' \
   --data-binary @bind-ingest-pipeline.json
 echo
@@ -39,7 +39,7 @@ ${CURL} -X PUT "${ES_URL}/_component_template/logs-bind@custom" \
 echo
 
 echo "== 3/6 Loading dnstap ingest pipeline =="
-${CURL} -X PUT "${ES_URL}/_ingest/pipeline/bind-dnstap-pipeline" \
+${CURL} -X PUT "${ES_URL}/_ingest/pipeline/logs-bind.dnstap@custom" \
   -H 'Content-Type: application/json' \
   --data-binary @bind-dnstap-pipeline.json
 echo
@@ -51,12 +51,12 @@ ${CURL} -X PUT "${ES_URL}/_component_template/logs-bind.dnstap@custom" \
 echo
 
 echo "== 5/6 Simulating text-log pipeline against sample BIND log lines =="
-${CURL} -X POST "${ES_URL}/_ingest/pipeline/bind-log-pipeline/_simulate?pretty" \
+${CURL} -X POST "${ES_URL}/_ingest/pipeline/logs-bind@custom/_simulate?pretty" \
   -H 'Content-Type: application/json' \
   --data-binary @bind-pipeline-simulate-test.json
 
 echo "== 6/6 Simulating dnstap pipeline against sample exported events =="
-${CURL} -X POST "${ES_URL}/_ingest/pipeline/bind-dnstap-pipeline/_simulate?pretty" \
+${CURL} -X POST "${ES_URL}/_ingest/pipeline/logs-bind.dnstap@custom/_simulate?pretty" \
   -H 'Content-Type: application/json' \
   --data-binary @bind-dnstap-simulate-test.json
 
