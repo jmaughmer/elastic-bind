@@ -284,7 +284,22 @@ UTC `@timestamp`, so there's no timezone to configure.
   `resolver_response`, ...);
 - collects `related.ip` (client, server and every answer address) and
   `related.hosts` (the queried name), so searching an IP finds the lookups
-  that resolved to it.
+  that resolved to it;
+- looks up the client's location (`client.geo.*`) and network
+  (`client.as.number`, `client.as.organization.name`) in Elasticsearch's
+  built-in GeoLite2 databases. Private and reserved addresses have no
+  entry and are left alone, so this mostly matters on internet-facing
+  authoritative servers.
+
+**GeoIP databases.** Elasticsearch downloads its GeoIP databases the first
+time a pipeline uses them, from `storage.googleapis.com`. That needs
+outbound HTTPS from the cluster. Until they arrive, which usually takes a
+minute, events get a `_geoip_database_unavailable_GeoLite2-City.mmdb`
+(and `…-ASN.mmdb`) tag and no location. Check the download with
+`GET _ingest/geoip/stats`. On a cluster without internet access, either
+[supply the databases yourself](https://www.elastic.co/guide/en/elasticsearch/reference/8.17/geoip-processor.html#manually-update-geoip-databases),
+or remove the two `geoip` processors and their two `rename` processors
+from `bind-dnstap-pipeline.json`.
 
 Like the text-log pipeline it never drops a document: a line that isn't
 valid JSON keeps its `message`, gets the `bind_dnstap_json_parse_failure`
@@ -305,14 +320,37 @@ stream's lifecycle (ILM) policy for your query rate.
 
 ## Kibana dashboards
 
-[kibana/bind-dashboards.ndjson](kibana/bind-dashboards.ndjson) holds three
+[kibana/bind-dashboards.ndjson](kibana/bind-dashboards.ndjson) holds eight
 dashboards, linked to each other by a navigation panel at the top, plus
 the data views they use (`logs-bind.dnstap-*`, `logs-bind-*`, and
 `logs-bind.dnstap-*,logs-network_traffic.dns-*` for the combined one). Import
 them with `setup.sh` by also setting `KIBANA_URL` (same credentials as
 `ES_AUTH`), or in Kibana under **Stack Management → Saved Objects →
-Import**. Both open on the last 24 hours. Built and checked against
+Import**. They all open on the last 24 hours. Built and checked against
 Kibana 8.17; newer versions migrate the objects on import.
+
+Most of them read the dnstap export, and each needs different message
+types captured. Set those with the `bind_dns` role's `bind_dnstap_types`
+on the servers concerned. A dashboard whose messages aren't captured
+simply stays empty.
+
+| Dashboard | Servers | `bind_dnstap_types` it needs |
+|---|---|---|
+| DNS answers | all | `auth response`, `client response` (the role's default) |
+| Response times on any dashboard | all | the queries too: `auth query` on authoritative servers, `client query` on resolvers |
+| Resolver internals | recursive | `resolver query`, `resolver response`; `client query` for the cache comparison |
+| Forwarders | recursive, with forwarders | `resolver query`, `resolver response` |
+| Authoritative server | authoritative | `auth query`, `auth response`, `client response` |
+| Threat hunting | recursive | `client response` |
+| Capacity and tuning | all | the answers; the queries for the EDNS buffer panel |
+| DNS traffic | all | the answers, plus the Network Packet Capture integration |
+
+BIND logs an answer as `CLIENT_RESPONSE` only when the query asked for
+recursion. Resolvers querying an authoritative server don't ask, so BIND
+logs those answers as `AUTH_RESPONSE`. Every dashboard and alerting rule
+that counts answers therefore counts both kinds. Forwarded lookups have no
+message type of their own: BIND logs them as resolver messages, with
+recursion desired set.
 
 ```bash
 ES_URL=https://localhost:9200 ES_AUTH=elastic:yourpassword KIBANA_URL=https://localhost:5601 ./setup.sh
@@ -332,11 +370,11 @@ ES_URL=https://localhost:9200 ES_AUTH=elastic:yourpassword KIBANA_URL=https://lo
   **Response times** need the queries captured as well as the answers.
   BIND stamps each dnstap message with one time only, so the role's
   converter computes `event.duration` by pairing each answer with its
-  query. Set `bind_dnstap_types` to `[auth query, client response]` on
-  authoritative servers, or `[client query, client response]` on
-  resolvers. Without the queries, the response-time panels and the
-  slow-answers alert stay empty. The query events don't affect the other
-  panels, which count only `client_response` events.
+  query. Add `auth query` on authoritative servers, or `client query` on
+  resolvers, to the answer types in `bind_dnstap_types`. Without the
+  queries, the response-time panels and the slow-answers alert stay
+  empty. The query events don't affect the other panels, which count only
+  answers.
 - Investigation panels: NXDOMAIN over time by client; NXDOMAIN by domain
   with distinct names, clients and average first-label length — many
   distinct, long, random-looking names under one domain is the signature of
@@ -344,8 +382,8 @@ ES_URL=https://localhost:9200 ES_AUTH=elastic:yourpassword KIBANA_URL=https://lo
   DNS-tunnelling signal); names answered with SERVFAIL/REFUSED.
 - Upstream servers: lookups, failures and median time per forwarder/
   authority the resolver queried. This needs `resolver response` in the
-  role's `bind_dnstap_types`; the default captures only `client response`,
-  so the panel stays empty until it's added.
+  role's `bind_dnstap_types`, which the default doesn't capture; **Resolver
+  internals** below goes into much more detail.
 - A table of the individual answers (client, name, type, response code,
   answer data, response time).
 
@@ -384,6 +422,91 @@ rows. Compared with dnstap, the wire adds what BIND can't see:
 Without the packet-capture data the dashboard still works, showing BIND's
 side only. Without the dnstap export, it shows the wire's side only.
 
+**[BIND] Resolver internals (upstream lookups)** — what a recursive server
+does behind its cache, from the lookups named sends to other servers while
+resolving:
+
+- KPIs: client queries, iterative upstream lookups, lookups sent to
+  forwarders, failed upstream answers, servers contacted, median upstream
+  response time.
+- Client queries against upstream lookups over time. The gap between the
+  lines is what the cache answered.
+- Upstream servers with lookups, answers, failures, median and p95 time;
+  the slowest servers by p95; and zones looked up. For each zone, dnstap
+  records which zone the upstream server was asked as an authority for:
+  `.` for the roots, `com` for a TLD server, and so on.
+- Truncated upstream answers (retried over TCP) by server.
+- Names needing the most upstream lookups, which are cache misses: names
+  with tiny TTLs, NXDOMAIN noise, or tunnelling, where every name is new.
+  Also failing upstream lookups.
+
+**[BIND] Forwarders** — the forwarders recursive servers use
+(`bind_forwarders`, or `type: forward` zones):
+
+- KPIs: lookups sent, answered, forwarders used, failed answers, median
+  and p95 response time.
+- Lookups and median response time over time, by forwarder.
+- A per-forwarder table of lookups sent and answered, failures and
+  latency. Sent minus answered is the number of lookups the forwarder
+  never answered, which are timeouts.
+- Response codes by forwarder, forwarded zones, and names forwarders
+  answered with an error.
+
+**[BIND] Authoritative server** — what an authoritative server is asked and
+answers, from answers carrying the AA flag plus REFUSED ones:
+
+- KPIs: authoritative answers, querying resolvers, NXDOMAIN, REFUSED, ANY
+  queries, median answer size.
+- Answers over time by response code, and answers by zone.
+- Top names asked. NXDOMAIN names show typos, stale links or zone
+  walking. REFUSED clients ask for zones the server doesn't host, or for
+  recursion: open-resolver probing, or misconfigured resolvers.
+- Query types, the share of DNSSEC-aware resolvers (DO bit), and the EDNS
+  buffer sizes resolvers advertise.
+- Where queries come from (country) and which networks (ASN), from the
+  pipeline's GeoIP lookups.
+- The largest answers, by name and type: the amplification potential an
+  attacker would abuse. Also the clients sent the most bytes, which
+  spoofed-source floods target, and answers by server and transport.
+
+**[BIND] Threat hunting** — lookups worth a second look, from what recursive
+servers answered their own clients (answers with recursion available):
+
+- KPIs: distinct domains and TLDs, lookups with 40+ character labels,
+  random-looking names, TXT/NULL lookups, NXDOMAIN answers.
+- **Possible DNS tunnelling by domain**: distinct names, average label
+  length and entropy, TXT/NULL count, bytes and clients per domain. Data
+  tunnelled through DNS shows up as one domain with many unique, long,
+  random labels, usually TXT.
+- Clients with the broadest query profile, which is how DGA malware shows
+  up: hundreds of domains, mostly NXDOMAIN.
+- The most recently first-seen domains in the time range, the
+  least-queried TLDs, random-looking names, and unusual record types by
+  client.
+
+  "Random-looking" means a first label of 12+ characters with a Shannon
+  entropy of 3.5 bits per character or more. That's computed by a runtime
+  field, `dns.question.first_label_entropy`. Some CDNs and anti-spam
+  services use names like that legitimately, so check before acting. To
+  flag known-bad domains or addresses, add an
+  [enrich processor](https://www.elastic.co/guide/en/elasticsearch/reference/8.17/match-enrich-policy-type.html)
+  with your threat feed to `logs-bind.dnstap@custom`.
+
+**[BIND] Capacity and tuning** — load, and the settings it informs:
+
+- KPIs: answers per second, answers over TCP, truncated answers (TC),
+  answers over 1232 bytes, median and p99 response time.
+- Answers per second over time, by server and by transport. Truncated
+  answers over time, by server.
+- The EDNS buffer sizes clients advertise, against answer sizes. Answers
+  bigger than the buffer are truncated and retried over TCP; see
+  `edns-udp-size`, 1232 by default.
+- Response time and average size by query type, and the busiest clients
+  and client networks (/24 for IPv4, /48 for IPv6).
+
+Answer sizes need a role version whose converter records
+`bind.dnstap.message_size`.
+
 **[BIND] Server logs** — from the text logs:
 
 - KPIs: log events, errors and warnings, failures, security denials, zone
@@ -398,11 +521,19 @@ side only. Without the dnstap export, it shows the wire's side only.
   dnstap dashboard has answers.
 - A table of errors, warnings and failures.
 
-The dnstap and combined data views add two runtime fields the dashboards use
-(the combined one also adds `dns.source`):
-`dns.response_time_ms` (`event.duration` in milliseconds; see the note on
-response times below) and
-`dns.question.first_label_length`. To change a dashboard, edit
+The dnstap and combined data views add runtime fields the dashboards use:
+
+| Runtime field | What it is |
+|---|---|
+| `dns.response_time_ms` | `event.duration` in milliseconds (see the note on response times above) |
+| `dns.question.first_label_length` | length of the leftmost label |
+| `dns.question.first_label_entropy` | Shannon entropy (bits per character) of the leftmost label |
+| `dns.zone` | the zone an answer came from: `bind.dnstap.query_zone`, else the registered domain |
+| `client.subnet` | the client's /24 (IPv4) or /48 (IPv6) |
+| `bind.dnstap.message_size_class` | answer size class: up to 512 B, up to 1232 B, up to 4096 B, larger |
+| `dns.source` (combined view only) | "BIND (dnstap)" or "Packet capture" |
+
+To change a dashboard, edit
 [kibana/build_dashboards.py](kibana/build_dashboards.py), run
 `python3 kibana/build_dashboards.py`, and re-import: the export embeds
 JSON inside JSON and is easy to break by hand. A change made in Kibana's

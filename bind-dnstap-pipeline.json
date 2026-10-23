@@ -1,5 +1,5 @@
 {
-  "description": "Enriches BIND dnstap events exported as NDJSON by the bind_dns Ansible role's converter (bind-dnstap-to-ndjson): decodes the JSON line if Elastic Agent didn't, splits dns.question.name into registered domain/subdomain/TLD, and sets event.outcome, event.action and related.ip. The converter already writes ECS field names, so nothing is renamed.",
+  "description": "Enriches BIND dnstap events exported as NDJSON by the bind_dns Ansible role's converter (bind-dnstap-to-ndjson): decodes the JSON line if Elastic Agent didn't, splits dns.question.name into registered domain/subdomain/TLD, sets event.outcome, event.action and related.ip, and adds the client's location and network (client.geo, client.as) from Elasticsearch's GeoIP databases. The converter already writes ECS field names, so nothing is renamed.",
   "processors": [
     {
       "json": {
@@ -76,7 +76,29 @@
         "if": "ctx.dns?.question?.name != null",
         "tag": "related_hosts"
       }
-    }
+    },
+    {
+      "geoip": {
+        "description": "Where the client is (country, city, location), from Elasticsearch's built-in GeoLite2 City database. Private and reserved addresses have no entry and are left alone.",
+        "field": "client.ip",
+        "target_field": "client.geo",
+        "ignore_missing": true,
+        "tag": "client_geo"
+      }
+    },
+    {
+      "geoip": {
+        "description": "Which network (autonomous system) the client is in, from the GeoLite2 ASN database.",
+        "field": "client.ip",
+        "target_field": "client.as",
+        "database_file": "GeoLite2-ASN.mmdb",
+        "properties": ["asn", "organization_name"],
+        "ignore_missing": true,
+        "tag": "client_asn"
+      }
+    },
+    { "rename": { "field": "client.as.asn", "target_field": "client.as.number", "ignore_missing": true, "tag": "client_as_number" } },
+    { "rename": { "field": "client.as.organization_name", "target_field": "client.as.organization.name", "ignore_missing": true, "tag": "client_as_organization" } }
   ],
   "on_failure": [
     { "append": { "field": "tags", "value": "bind_dnstap_pipeline_failure" } },

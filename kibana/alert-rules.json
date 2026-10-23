@@ -7,7 +7,7 @@
       "tags": ["bind", "dns", "dnstap", "security"],
       "interval": "1m",
       "params": {
-        "kql": "event.action:client_response and dns.response_code:NXDOMAIN",
+        "kql": "event.action:(client_response or auth_response) and dns.response_code:NXDOMAIN",
         "aggType": "count",
         "groupBy": "top", "termField": "client.ip", "termSize": 10,
         "thresholdComparator": ">", "threshold": [100],
@@ -22,7 +22,7 @@
       "interval": "1m",
       "params": {
         "_comment": "ES|QL, because the query rule's KQL mode can't count distinct values. Fires (one alert listing the domains) whenever the query returns any row; edit the 50 to tune.",
-        "esql": "FROM logs-bind.dnstap-* | WHERE event.action == \"client_response\" AND dns.response_code == \"NXDOMAIN\" AND dns.question.registered_domain IS NOT NULL | STATS distinct_names = COUNT_DISTINCT(dns.question.name), clients = COUNT_DISTINCT(client.ip) BY dns.question.registered_domain | WHERE distinct_names > 50 | SORT distinct_names DESC | LIMIT 10",
+        "esql": "FROM logs-bind.dnstap-* | WHERE event.action IN (\"client_response\", \"auth_response\") AND dns.response_code == \"NXDOMAIN\" AND dns.question.registered_domain IS NOT NULL | STATS distinct_names = COUNT_DISTINCT(dns.question.name), clients = COUNT_DISTINCT(client.ip) BY dns.question.registered_domain | WHERE distinct_names > 50 | SORT distinct_names DESC | LIMIT 10",
         "timeWindowSize": 15, "timeWindowUnit": "m"
       },
       "why": "Lots of different non-existent names under one domain is the signature of DGA malware or a random-subdomain ('water torture') attack against that domain's servers. A broken app repeating one bad name doesn't trigger it."
@@ -33,7 +33,7 @@
       "tags": ["bind", "dns", "dnstap", "availability"],
       "interval": "1m",
       "params": {
-        "kql": "event.action:client_response and event.outcome:failure",
+        "kql": "event.action:(client_response or auth_response) and event.outcome:failure",
         "aggType": "count",
         "groupBy": "top", "termField": "observer.hostname", "termSize": 10,
         "thresholdComparator": ">", "threshold": [50],
@@ -47,7 +47,7 @@
       "tags": ["bind", "dns", "dnstap", "performance"],
       "interval": "1m",
       "params": {
-        "kql": "event.action:client_response and dns.response_time_ms:*",
+        "kql": "event.action:(client_response or auth_response) and dns.response_time_ms:*",
         "aggType": "avg", "aggField": "dns.response_time_ms",
         "groupBy": "top", "termField": "observer.hostname", "termSize": 10,
         "thresholdComparator": ">", "threshold": [500],
@@ -61,7 +61,7 @@
       "tags": ["bind", "dns", "dnstap", "security"],
       "interval": "1m",
       "params": {
-        "kql": "event.action:client_response and dns.question.first_label_length >= 40",
+        "kql": "event.action:(client_response or auth_response) and dns.question.first_label_length >= 40",
         "aggType": "count",
         "groupBy": "top", "termField": "client.ip", "termSize": 10,
         "thresholdComparator": ">", "threshold": [20],
@@ -75,7 +75,7 @@
       "tags": ["bind", "dns", "dnstap", "pipeline"],
       "interval": "5m",
       "params": {
-        "kql": "event.action:client_response",
+        "kql": "event.action:(client_response or auth_response)",
         "aggType": "count",
         "groupBy": "all",
         "thresholdComparator": "<", "threshold": [1],
