@@ -28,7 +28,7 @@ below.
 | [kibana/build_dashboards.py](kibana/build_dashboards.py) | Generates that NDJSON — edit panels here and re-run, rather than hand-editing the export. |
 | [kibana/alert-rules.json](kibana/alert-rules.json) | Kibana alerting rules for the dnstap data (thresholds, queries, what each one means). |
 | [kibana/load_alert_rules.py](kibana/load_alert_rules.py) | Creates or updates those rules through Kibana's alerting API. |
-| [setup.sh](setup.sh) | Loads both pipelines + component templates, runs both simulate tests, and (with `KIBANA_URL`) imports the dashboards and creates the alerting rules. |
+| [setup.sh](setup.sh) | Loads both pipelines + component templates, runs both simulate tests, and (with `KIBANA_URL`) imports the dashboards and creates the alerting rules. The same can be done by hand in Kibana Dev Tools: see **Manual setup with Kibana Dev Tools**. |
 
 ## How it works
 
@@ -103,6 +103,10 @@ in the string, so `event.timezone` is ignored for that format.
 ES_URL=https://localhost:9200 ES_AUTH=elastic:yourpassword ./setup.sh
 ```
 
+(No shell? The same steps can be done in Kibana's Dev Tools console: see
+[Manual setup with Kibana Dev Tools](#manual-setup-with-kibana-dev-tools)
+below.)
+
 That loads both pipelines and their component templates
 (`logs-bind@custom`, `logs-bind.dnstap@custom`), then runs each
 pipeline against its sample file and prints the parsed output — **check
@@ -115,6 +119,88 @@ Do this *before* enabling the integration below: Fleet only composes a
 `@custom` component template into the index template it generates for a
 data stream if the component template already exists (or, if the
 integration is already running, before the next backing-index rollover).
+
+### Manual setup with Kibana Dev Tools
+
+If you can't run `setup.sh` (no shell with network access to
+Elasticsearch, or you'd rather see each step), make the same requests in
+Kibana's **Dev Tools** console. Open **Management → Dev Tools**. Each
+request below is a method and path on one line, followed by the contents
+of a file from this repository pasted on the lines under it. Put the
+cursor in a request and press **Ctrl+Enter** (**⌘+Enter** on macOS), or
+click its ▶ button. You need the `manage_pipeline` and
+`manage_index_templates` cluster privileges; the `elastic` superuser has
+both.
+
+**1. Text-log pipeline and its field mappings** (dataset `bind`):
+
+```console
+PUT _ingest/pipeline/bind-log-pipeline
+<paste the contents of bind-ingest-pipeline.json>
+
+PUT _component_template/logs-bind@custom
+<paste the contents of logs-bind@custom.json>
+```
+
+**2. dnstap pipeline and its field mappings** (dataset `bind.dnstap`;
+skip this if you don't use the dnstap export):
+
+```console
+PUT _ingest/pipeline/bind-dnstap-pipeline
+<paste the contents of bind-dnstap-pipeline.json>
+
+PUT _component_template/logs-bind.dnstap@custom
+<paste the contents of logs-bind.dnstap@custom.json>
+```
+
+Each of these should answer `{"acknowledged": true}`. Paste each file
+whole, from its opening `{` to its closing `}`, on the line directly under
+its request line.
+
+**3. Run each pipeline against the sample documents**, the acceptance test
+`setup.sh` also runs:
+
+```console
+POST _ingest/pipeline/bind-log-pipeline/_simulate
+<paste the contents of bind-pipeline-simulate-test.json>
+
+POST _ingest/pipeline/bind-dnstap-pipeline/_simulate
+<paste the contents of bind-dnstap-simulate-test.json>
+```
+
+The response lists each sample document as the pipeline indexes it. Check
+that every one has the parsed fields (`bind.category`, `@timestamp`,
+`client.ip` and so on for the text logs; `event.action`,
+`dns.question.registered_domain` for dnstap). Also check that none has an
+`error` key or a `tags` entry ending in `_failure`. To test a real line
+from your own servers, replace a sample's `message` with it and run the
+request again.
+
+**4. Check what's installed:**
+
+```console
+GET _ingest/pipeline/bind-*
+GET _component_template/logs-bind*
+```
+
+To update later, pull the new files and run the same `PUT` requests
+again. A `PUT` replaces the existing pipeline or component template.
+Mapping changes in a component template only reach a data stream's next
+backing index. Once the data streams exist, roll them over to apply the
+changes straight away (replace `default` with your integration's
+namespace):
+
+```console
+POST logs-bind-default/_rollover
+POST logs-bind.dnstap-default/_rollover
+```
+
+The Kibana side has no Dev Tools equivalent here. Import the dashboards
+under **Stack Management → Saved Objects → Import**, choosing
+[kibana/bind-dashboards.ndjson](kibana/bind-dashboards.ndjson) (see
+**Kibana dashboards** below). Create the alerting rules with
+[kibana/load_alert_rules.py](kibana/load_alert_rules.py) from any machine
+that can reach Kibana (see **Kibana alerting rules**).
 
 Then:
 
@@ -175,8 +261,8 @@ Like the text-log pipeline it never drops a document: a line that isn't
 valid JSON keeps its `message`, gets the `bind_dnstap_json_parse_failure`
 tag and an `error.message`.
 
-To ship it, after `setup.sh`, add a second **Custom Logs** integration to
-the same agent policy:
+To ship it, after `setup.sh` (or the Dev Tools steps above), add a second
+**Custom Logs** integration to the same agent policy:
 
 - **Dataset name**: `bind.dnstap`
 - **Paths**: `/var/log/named/dnstap.ndjson*` (the `*` also covers the
